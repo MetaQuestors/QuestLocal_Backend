@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.34928.147
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuestLocalBackend", "QuestLocalBackend.csproj", "{FD8EAD05-9ECB-4E8C-87FC-BB451FFBAEE6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuestLocalBackendTests", "..\QuestLocalBackendTests\QuestLocalBackendTests.csproj", "{65019E89-EB30-4B3A-9AD7-69559B0F8287}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{FD8EAD05-9ECB-4E8C-87FC-BB451FFBAEE6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FD8EAD05-9ECB-4E8C-87FC-BB451FFBAEE6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FD8EAD05-9ECB-4E8C-87FC-BB451FFBAEE6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FD8EAD05-9ECB-4E8C-87FC-BB451FFBAEE6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{65019E89-EB30-4B3A-9AD7-69559B0F8287}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{65019E89-EB30-4B3A-9AD7-69559B0F8287}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{65019E89-EB30-4B3A-9AD7-69559B0F8287}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{65019E89-EB30-4B3A-9AD7-69559B0F8287}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {41025A80-58E4-4902-B5EE-D64CCF8499E0}
+	EndGlobalSection
+EndGlobal
