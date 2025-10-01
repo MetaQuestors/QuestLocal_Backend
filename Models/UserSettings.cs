@@ -12,6 +12,7 @@ namespace QuestLocalBackend.Models
         public bool IsDarkMode { get; set; } = false;
         public bool NotificationsEnabled { get; set; } = true;
         public string Language { get; set; } = "English";
+        public bool AutoSave { get; set; } = true;
 
         public User User { get; set; } = null!;
     }

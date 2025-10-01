@@ -1,273 +1,5 @@
-﻿//using Microsoft.AspNetCore.Mvc;
-//using Microsoft.EntityFrameworkCore;
-//using QuestLocalBackend.Data;
-//using QuestLocalBackend.Models;
-
-//namespace QuestLocalBackend.Controllers
-//{
-//    [Route("api/[controller]")]
-//    [ApiController]
-//    public class QuestsController : ControllerBase
-//    {
-//        private readonly ApplicationDbContext _context;
-
-//        public QuestsController(ApplicationDbContext context)
-//        {
-//            _context = context;
-//        }
-
-//        // GET: api/Quests
-//        // Retrieve all active quests
-//        [HttpGet]
-//        public async Task<ActionResult<IEnumerable<Quest>>> GetQuests()
-//        {
-//            var quests = await _context.Quests
-//                .Where(q => q.IsActive)
-//                .Include(q => q.Issuer)
-//                .Select(q => new
-//                {
-//                    q.QuestId,
-//                    q.Heading,
-//                    q.Description,
-//                    q.CoinReward,
-//                    q.VerificationType,
-//                    q.DueDate,
-//                    IssuerUsername = q.Issuer.Username
-//                })
-//                .ToListAsync();
-
-//            return Ok(quests);
-//        }
-
-//        // GET: api/Quests/5
-//        [HttpGet("{id}")]
-//        public async Task<ActionResult<Quest>> GetQuest(int id)
-//        {
-//            var quest = await _context.Quests
-//                .Include(q => q.Issuer)
-//                .Include(q => q.UsersTaken)
-//                .FirstOrDefaultAsync(q => q.QuestId == id && q.IsActive);
-
-//            if (quest == null)
-//            {
-//                return NotFound("Quest not found or inactive.");
-//            }
-
-//            return Ok(new
-//            {
-//                quest.QuestId,
-//                quest.Heading,
-//                quest.Description,
-//                quest.CoinReward,
-//                quest.VerificationType,
-//                quest.DueDate,
-//                IssuerUsername = quest.Issuer.Username,
-//                Participants = quest.UsersTaken.Select(uq => new { uq.UserId, uq.Status })
-//            });
-//        }
-//        [HttpPost]
-//        public async Task<ActionResult<Quest>> CreateQuest([FromBody] CreateQuestRequest request)
-//        {
-//            // Validate that the issuer exists
-//            var issuer = await _context.Users.FindAsync(request.IssuerId);
-//            if (issuer == null)
-//            {
-//                return NotFound("Issuer not found.");
-//            }
-
-//            // Validate that the issuer has enough coins to create the quest
-//            if (issuer.Coins < request.CoinReward)
-//            {
-//                return BadRequest("Issuer does not have enough coins to fund this quest.");
-//            }
-
-//            // Map the CreateQuestRequest to the Quest model
-//            var quest = new Quest
-//            {
-//                IssuerId = request.IssuerId,
-//                Heading = request.Heading,
-//                Description = request.Description,
-//                CoinReward = request.CoinReward,
-//                VerificationType = request.VerificationType,
-//                XPReward = request.XPReward,
-//                BadgeReward = request.BadgeReward,
-//                Location = request.Location,
-//                CoverImageUrl = request.CoverImageUrl,
-//                EstimatedTime = request.EstimatedTime,
-//                QuestType = request.QuestType,
-//                Goal = request.Goal,
-//                IsPrivate = request.IsPrivate,
-//                ActivationTime = request.ActivationTime, // Now a string
-//                DueDate = request.DueDate,
-//                CreatedAt = DateTime.Now,
-//                IsActive = true, // By default, quests are active when created
-//                ScreenshotUrl = request.ScreenshotUrl // Handle screenshot URL
-//            };
-
-//            // Add the quest to the database
-//            _context.Quests.Add(quest);
-//            await _context.SaveChangesAsync();
-
-//            // Return the created quest, including the generated QuestId
-//            return CreatedAtAction(nameof(GetQuest), new { id = quest.QuestId }, quest);
-//        }
-
-//        //// POST: api/Quests
-//        //[HttpPost]
-//        //public async Task<ActionResult<Quest>> CreateQuest([FromBody] CreateQuestRequest request)
-//        //{
-//        //    var issuer = await _context.Users.FindAsync(request.IssuerId);
-//        //    if (issuer == null)
-//        //    {
-//        //        return NotFound("Issuer not found.");
-//        //    }
-//        //    if (issuer.Coins < request.CoinReward)
-//        //    {
-//        //        return BadRequest("Issuer does not have enough coins to fund this quest.");
-//        //    }
-
-//        //    var quest = new Quest
-//        //    {
-//        //        IssuerId = request.IssuerId,
-//        //        Heading = request.Heading,
-//        //        Description = request.Description,
-//        //        CoinReward = request.CoinReward,
-//        //        VerificationType = request.VerificationType,
-//        //        XPReward = request.XPReward,
-//        //        BadgeReward = request.BadgeReward,
-//        //        Location = request.Location,
-//        //        CoverImageUrl = request.CoverImageUrl,
-//        //        EstimatedTime = request.EstimatedTime,
-//        //        QuestType = request.QuestType,
-//        //        Goal = request.Goal,
-//        //        IsPrivate = request.IsPrivate,
-//        //        ActivationTime = request.ActivationTime, // Now a string
-//        //        DueDate = request.DueDate,
-//        //        CreatedAt = DateTime.Now,
-//        //        IsActive = true,
-
-//        //    };
-
-//        //    _context.Quests.Add(quest);
-//        //    await _context.SaveChangesAsync();
-
-//        //    return CreatedAtAction(nameof(GetQuest), new { id = quest.QuestId }, quest);
-//        //}
-
-//        // PUT: api/Quests/5
-//        [HttpPut("{id}")]
-//        public async Task<IActionResult> UpdateQuest(int id, [FromBody] UpdateQuestRequest request)
-//        {
-//            var quest = await _context.Quests.FindAsync(id);
-//            if (quest == null || !quest.IsActive)
-//            {
-//                return NotFound("Quest not found or already inactive.");
-//            }
-
-//            if (quest.IssuerId != request.IssuerId)
-//            {
-//                return Unauthorized("Only the issuer can update this quest.");
-//            }
-
-//            quest.Heading = request.Heading ?? quest.Heading;
-//            quest.Description = request.Description ?? quest.Description;
-//            quest.CoinReward = request.CoinReward ?? quest.CoinReward;
-//            quest.VerificationType = request.VerificationType ?? quest.VerificationType;
-//            quest.DueDate = request.DueDate ?? quest.DueDate;
-//            quest.IsActive = request.IsActive ?? quest.IsActive;
-
-//            var issuer = await _context.Users.FindAsync(quest.IssuerId);
-//            if (quest.CoinReward > issuer!.Coins)
-//            {
-//                return BadRequest("Issuer does not have enough coins for the updated reward.");
-//            }
-
-//            try
-//            {
-//                await _context.SaveChangesAsync();
-//            }
-//            catch (DbUpdateConcurrencyException)
-//            {
-//                if (!_context.Quests.Any(q => q.QuestId == id))
-//                {
-//                    return NotFound();
-//                }
-//                throw;
-//            }
-
-//            return NoContent();
-//        }
-//        // GET: api/Quests/my/{issuerId}
-//        [HttpGet("my/{issuerId}")]
-//        public async Task<IActionResult> GetQuestsByIssuer(int issuerId)
-//        {
-//            var myQuests = await _context.Quests
-//                .Where(q => q.IssuerId == issuerId)
-//                .Select(q => new {
-//                    q.QuestId,
-//                    q.Heading,
-//                    q.Description,
-//                    q.CoinReward,
-//                    q.DueDate,
-//                    q.IsActive
-//                })
-//                .ToListAsync();
-
-//            return Ok(myQuests);
-//        }
-
-//        // DELETE: api/Quests/5
-//        [HttpDelete("{id}")]
-//        public async Task<IActionResult> DeleteQuest(int id, [FromQuery] int issuerId)
-//        {
-//            var quest = await _context.Quests.FindAsync(id);
-//            if (quest == null || !quest.IsActive)
-//            {
-//                return NotFound("Quest not found or already inactive.");
-//            }
-
-//            if (quest.IssuerId != issuerId)
-//            {
-//                return Unauthorized("Only the issuer can delete this quest.");
-//            }
-
-//            quest.IsActive = false;
-//            await _context.SaveChangesAsync();
-//            return NoContent();
-//        }
-//    }
-
-//    public class CreateQuestRequest
-//    {
-//        public int IssuerId { get; set; }
-//        public string Heading { get; set; } = string.Empty;
-//        public string? Description { get; set; }
-//        public int CoinReward { get; set; }
-//        public string VerificationType { get; set; } = string.Empty;
-//        public DateTime DueDate { get; set; }
-//        public int XPReward { get; set; }
-//        public string BadgeReward { get; set; } = string.Empty;
-//        public string Location { get; set; } = string.Empty;
-//        public string CoverImageUrl { get; set; } = string.Empty;
-//        public string EstimatedTime { get; set; } = string.Empty;
-//        public string QuestType { get; set; } = string.Empty;
-//        public string Goal { get; set; } = string.Empty;
-//        public bool IsPrivate { get; set; }
-//        public string ActivationTime { get; set; } = "Now"; // Changed to string
-//        public string ScreenshotUrl { get; internal set; }
-//    }
-
-//    public class UpdateQuestRequest
-//    {
-//        public int IssuerId { get; set; }
-//        public string? Heading { get; set; }
-//        public string? Description { get; set; }
-//        public int? CoinReward { get; set; }
-//        public string? VerificationType { get; set; }
-//        public DateTime? DueDate { get; set; }
-//        public bool? IsActive { get; set; }
-//    }
-//}
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuestLocalBackend.Data;
@@ -286,14 +18,19 @@ namespace QuestLocalBackend.Controllers
             _context = context;
         }
 
-        // GET: api/Quests
-        // Retrieve all active quests
+        // =========================
+        // Public reads
+        // =========================
+
+        // GET: api/Quests  -> all active quests (any visibility)
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<Quest>>> GetQuests()
+        public async Task<IActionResult> GetQuests()
         {
             var quests = await _context.Quests
+                .AsNoTracking()
                 .Where(q => q.IsActive)
                 .Include(q => q.Issuer)
+                .OrderByDescending(q => q.CreatedAt)
                 .Select(q => new
                 {
                     q.QuestId,
@@ -302,6 +39,7 @@ namespace QuestLocalBackend.Controllers
                     q.CoinReward,
                     q.VerificationType,
                     q.DueDate,
+                    q.IsPrivate,
                     IssuerUsername = q.Issuer.Username
                 })
                 .ToListAsync();
@@ -309,9 +47,35 @@ namespace QuestLocalBackend.Controllers
             return Ok(quests);
         }
 
-        // GET: api/Quests/5
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Quest>> GetQuest(int id)
+        // GET: api/Quests/available  -> only active & public
+        [HttpGet("available")]
+        public async Task<IActionResult> GetAvailableQuests()
+        {
+            var quests = await _context.Quests
+                .AsNoTracking()
+                .Where(q => q.IsActive && !q.IsPrivate)
+                .Include(q => q.Issuer)
+                .OrderByDescending(q => q.CreatedAt)
+                .Select(q => new
+                {
+                    q.QuestId,
+                    q.Heading,
+                    q.Description,
+                    q.CoinReward,
+                    q.VerificationType,
+                    q.DueDate,
+                    q.CoverImageUrl,
+                    q.Location,
+                    IssuerUsername = q.Issuer.Username
+                })
+                .ToListAsync();
+
+            return Ok(quests);
+        }
+
+        // GET: api/Quests/{id}
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetQuest(int id)
         {
             var quest = await _context.Quests
                 .Include(q => q.Issuer)
@@ -319,9 +83,7 @@ namespace QuestLocalBackend.Controllers
                 .FirstOrDefaultAsync(q => q.QuestId == id && q.IsActive);
 
             if (quest == null)
-            {
                 return NotFound("Quest not found or inactive.");
-            }
 
             return Ok(new
             {
@@ -336,41 +98,43 @@ namespace QuestLocalBackend.Controllers
             });
         }
 
+        // =========================
+        // Writes (JWT required)
+        // =========================
+
         // POST: api/Quests
+        // Create quest as the currently authenticated user (issuer = token subject)
+        [Authorize]
         [HttpPost]
-        public async Task<ActionResult<Quest>> CreateQuest([FromBody] CreateQuestRequest request)
+        public async Task<IActionResult> CreateQuest([FromBody] CreateQuestRequest request)
         {
-            var issuer = await _context.Users.FindAsync(request.IssuerId);
-            if (issuer == null)
-            {
-                return NotFound("Issuer not found.");
-            }
+            var me = GetUserIdFromToken();
+            if (me == null) return Unauthorized("Missing user id in token.");
+
+            var issuer = await _context.Users.FindAsync(me.Value);
+            if (issuer == null) return Unauthorized("User not found.");
 
             if (issuer.Coins < request.CoinReward)
-            {
-                return BadRequest("Issuer does not have enough coins to fund this quest.");
-            }
+                return BadRequest("You don't have enough coins to fund this quest.");
 
             var quest = new Quest
             {
-                IssuerId = request.IssuerId,
+                IssuerId = me.Value, // <-- from token, not from body
                 Heading = request.Heading,
                 Description = request.Description,
                 CoinReward = request.CoinReward,
-                VerificationType = request.VerificationType,
-                XPReward = request.XPReward,
-                BadgeReward = request.BadgeReward,
+                VerificationType = string.IsNullOrWhiteSpace(request.VerificationType) ? "photo" : request.VerificationType,
                 Location = request.Location,
                 CoverImageUrl = request.CoverImageUrl,
                 EstimatedTime = request.EstimatedTime,
                 QuestType = request.QuestType,
                 Goal = request.Goal,
                 IsPrivate = request.IsPrivate,
-                ActivationTime = request.ActivationTime,
+                ActivationTime = string.IsNullOrWhiteSpace(request.ActivationTime) ? "Now" : request.ActivationTime,
                 DueDate = request.DueDate,
-                CreatedAt = DateTime.Now,
+                CreatedAt = DateTime.UtcNow,
                 IsActive = true,
-                ScreenshotUrl = request.ScreenshotUrl // Handle screenshot URL
+                ScreenshotUrl = request.ScreenshotUrl ?? string.Empty
             };
 
             _context.Quests.Add(quest);
@@ -379,56 +143,74 @@ namespace QuestLocalBackend.Controllers
             return CreatedAtAction(nameof(GetQuest), new { id = quest.QuestId }, quest);
         }
 
-        // PUT: api/Quests/5
-        [HttpPut("{id}")]
+        // PUT: api/Quests/{id}
+        // Only the quest owner can update their quest
+        [Authorize]
+        [HttpPut("{id:int}")]
         public async Task<IActionResult> UpdateQuest(int id, [FromBody] UpdateQuestRequest request)
         {
+            var me = GetUserIdFromToken();
+            if (me == null) return Unauthorized("Missing user id in token.");
+
             var quest = await _context.Quests.FindAsync(id);
             if (quest == null || !quest.IsActive)
-            {
                 return NotFound("Quest not found or already inactive.");
-            }
 
-            if (quest.IssuerId != request.IssuerId)
-            {
-                return Unauthorized("Only the issuer can update this quest.");
-            }
+            if (quest.IssuerId != me.Value)
+                return Forbid(); // not the owner
 
+            // Apply changes
             quest.Heading = request.Heading ?? quest.Heading;
             quest.Description = request.Description ?? quest.Description;
-            quest.CoinReward = request.CoinReward ?? quest.CoinReward;
+            if (request.CoinReward.HasValue) quest.CoinReward = request.CoinReward.Value;
             quest.VerificationType = request.VerificationType ?? quest.VerificationType;
             quest.DueDate = request.DueDate ?? quest.DueDate;
-            quest.IsActive = request.IsActive ?? quest.IsActive;
+            if (request.IsPrivate.HasValue) quest.IsPrivate = request.IsPrivate.Value;
 
-            var issuer = await _context.Users.FindAsync(quest.IssuerId);
-            if (quest.CoinReward > issuer!.Coins)
-            {
-                return BadRequest("Issuer does not have enough coins for the updated reward.");
-            }
-
-            try
-            {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!_context.Quests.Any(q => q.QuestId == id))
-                {
-                    return NotFound();
-                }
-                throw;
-            }
-
+            await _context.SaveChangesAsync();
             return NoContent();
         }
 
+        // DELETE: api/Quests/{id}
+        // Owner can delete their quest; Admin can delete any quest
+        [Authorize]
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> DeleteQuest(int id)
+        {
+            var me = GetUserIdFromToken();
+            if (me == null) return Unauthorized("Missing user id in token.");
+
+            var quest = await _context.Quests.FindAsync(id);
+            if (quest == null) return NotFound("Quest not found.");
+            if (!quest.IsActive) return BadRequest("Quest already deleted.");
+
+            var isIssuer = quest.IssuerId == me.Value;
+            var isAdmin = User.IsInRole("Admin");
+
+            if (!isIssuer && !isAdmin)
+                return Forbid(); // neither owner nor admin
+
+            quest.IsActive = false; // soft delete
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+        [Authorize]
+        [HttpGet("whoami")]
+        public IActionResult WhoAmI()
+        {
+            var claims = User.Claims.Select(c => new { c.Type, c.Value });
+            return Ok(claims);
+        }
+
         // GET: api/Quests/my/{issuerId}
-        [HttpGet("my/{issuerId}")]
+        // (Kept public, but typically you'd secure and use token id instead)
+        [HttpGet("my/{issuerId:int}")]
         public async Task<IActionResult> GetQuestsByIssuer(int issuerId)
         {
             var myQuests = await _context.Quests
+                .AsNoTracking()
                 .Where(q => q.IssuerId == issuerId)
+                .OrderByDescending(q => q.CreatedAt)
                 .Select(q => new
                 {
                     q.QuestId,
@@ -443,24 +225,45 @@ namespace QuestLocalBackend.Controllers
             return Ok(myQuests);
         }
 
-        // DELETE: api/Quests/5
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteQuest(int id, [FromQuery] int issuerId)
+        // =========================
+        // Helpers
+        // =========================
+        private int? GetUserIdFromToken()
         {
-            var quest = await _context.Quests.FindAsync(id);
-            if (quest == null || !quest.IsActive)
-            {
-                return NotFound("Quest not found or already inactive.");
-            }
-
-            if (quest.IssuerId != issuerId)
-            {
-                return Unauthorized("Only the issuer can delete this quest.");
-            }
-
-            quest.IsActive = false;
-            await _context.SaveChangesAsync();
-            return NoContent();
+            // Prefer standard NameIdentifier; fall back to "sub"
+            var id = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+            return int.TryParse(id, out var i) ? i : (int?)null;
         }
+    }
+
+    // =========================
+    // DTOs (no IssuerId here!)
+    // =========================
+    public class CreateQuestRequest
+    {
+        public string Heading { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int CoinReward { get; set; }
+        public string VerificationType { get; set; } = "photo";
+        public DateTime DueDate { get; set; }
+
+        public string? Location { get; set; }
+        public string? CoverImageUrl { get; set; }
+        public string? EstimatedTime { get; set; }
+        public string? QuestType { get; set; }
+        public string? Goal { get; set; }
+        public bool IsPrivate { get; set; } = false;
+        public string ActivationTime { get; set; } = "Now";
+        public string? ScreenshotUrl { get; set; }
+    }
+
+    public class UpdateQuestRequest
+    {
+        public string? Heading { get; set; }
+        public string? Description { get; set; }
+        public int? CoinReward { get; set; }
+        public string? VerificationType { get; set; }
+        public DateTime? DueDate { get; set; }
+        public bool? IsPrivate { get; set; }
     }
 }

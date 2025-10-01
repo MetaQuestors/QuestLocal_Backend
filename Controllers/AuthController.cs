@@ -1,10 +1,16 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using QuestLocalBackend.Models;
-using QuestLocalBackend.Data;
-using System.Security.Cryptography;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cryptography.KeyDerivation;
-using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
+using QuestLocalBackend.Data;
+using QuestLocalBackend.Models;
+using System.ComponentModel.DataAnnotations;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace QuestLocalBackend.Controllers
 {
@@ -13,377 +19,485 @@ namespace QuestLocalBackend.Controllers
     public class AuthController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly ILogger<AuthController> _logger;
+        private readonly IConfiguration _config;
 
-        public AuthController(ApplicationDbContext context)
+        public AuthController(ApplicationDbContext context, ILogger<AuthController> logger, IConfiguration config)
         {
             _context = context;
+            _logger = logger;
+            _config = config;
         }
 
-        // GET api/auth/user/{id}
-        [HttpGet("user/{id}")]
-        public async Task<IActionResult> GetUserById(int id)
-        {
-            var user = await _context.Users.FindAsync(id);
-            if (user == null) return NotFound();
+        // ---------------------------
+        // Auth: Signup / Login
+        // ---------------------------
 
-            return Ok(new
-            {
-                user.UserId,
-                user.Username,
-                user.Email,
-                user.ProfileImageUrl
-            });
-        }
-
-        //[HttpPost("signup")]
-        //public IActionResult Signup([FromBody] SignupRequest request)
-        //{
-        //    // Validate request
-        //    if (!ModelState.IsValid)
-        //    {
-        //        return BadRequest(ModelState);
-        //    }
-
-        //    var existingUser = _context.Users.FirstOrDefault(u => u.Email == request.Email);
-        //    if (existingUser != null)
-        //    {
-        //        return BadRequest(new { message = "User already exists" });
-        //    }
-
-        //    // Hash the password
-        //    string hashedPassword = HashPassword(request.Password);
-
-        //    var user = new User
-        //    {
-        //        Email = request.Email,
-        //        Username = request.Email.Split('@')[0],
-        //        PasswordHash = hashedPassword,
-        //        Coins = 0,
-        //        Tickets = 0,
-        //        CreatedAt = DateTime.UtcNow
-        //    };
-
-        //    _context.Users.Add(user);
-        //    _context.SaveChanges();
-
-        //    return Ok(new { message = "User created successfully", userId = user.UserId });
-        //}
         [HttpPost("signup")]
+        [AllowAnonymous]
         public async Task<IActionResult> Signup([FromBody] SignupRequest request)
         {
             if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
 
-            // normalize email
-            var normalizedEmail = (request.Email ?? "").Trim().ToLowerInvariant();
-
-            var exists = await _context.Users
-                .AnyAsync(u => u.Email.ToLower() == normalizedEmail);
-
-            if (exists)
-                return Conflict(new { message = "User already exists" }); // 409
-
-            var user = new User
+            try
             {
-                Email = normalizedEmail,
-                FirstName = request.FirstName.Trim(),
-                LastName = request.LastName.Trim(),
-                Username = string.IsNullOrWhiteSpace(request.Username)
-                    ? $"{request.FirstName}{request.LastName}".ToLowerInvariant()
-                    : request.Username.Trim(),
-                PasswordHash = HashPassword(request.Password),
-                Coins = 0,
-                Tickets = 0,
-                CreatedAt = DateTime.UtcNow
-            };
+                var email = (request.Email ?? "").Trim().ToLowerInvariant();
 
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
+                if (await _context.Users.AnyAsync(u => u.Email.ToLower() == email))
+                    return Conflict(new { message = "User with this email already exists" });
 
-            return Ok(new { message = "User created successfully", userId = user.UserId });
+                var username = string.IsNullOrWhiteSpace(request.Username)
+                    ? GenerateUniqueUsername(request.FirstName, request.LastName)
+                    : request.Username.Trim();
+
+                var (hash, salt) = HashPassword(request.Password);
+
+                var user = new User
+                {
+                    Email = email,
+                    FirstName = request.FirstName.Trim(),
+                    LastName = request.LastName.Trim(),
+                    Username = username,
+                    PasswordHash = $"{Convert.ToBase64String(salt)}:{Convert.ToBase64String(hash)}",
+                    Coins = 100,
+                    Tickets = 5,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+
+                // Default settings
+                if (!await _context.UserSettings.AnyAsync(s => s.UserId == user.UserId))
+                {
+                    _context.UserSettings.Add(new UserSettings
+                    {
+                        UserId = user.UserId,
+                        IsDarkMode = false,
+                        NotificationsEnabled = true,
+                        Language = "en",
+                        AutoSave = true
+                    });
+                    await _context.SaveChangesAsync();
+                }
+
+                _logger.LogInformation("New user registered: {Email} (ID: {UserId})", email, user.UserId);
+
+                return Ok(new
+                {
+                    message = "User created successfully",
+                    userId = user.UserId,
+                    username = user.Username
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during user registration for email: {Email}", request.Email);
+                return StatusCode(500, new { message = "An error occurred during registration" });
+            }
         }
 
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginRequest request)
+        [AllowAnonymous]
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
 
-            var user = _context.Users.FirstOrDefault(u => u.Email == request.Email);
-            if (user == null)
+            try
             {
-                // Don't reveal that the user doesn't exist (security best practice)
-                return Unauthorized(new { message = "Invalid email or password" });
-            }
+                var email = (request.Email ?? "").Trim().ToLowerInvariant();
 
-            // Verify the password
-            if (!VerifyPassword(request.Password, user.PasswordHash))
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
+                if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
+                {
+                    _logger.LogWarning("Failed login attempt for email: {Email}", email);
+                    return Unauthorized(new { message = "Invalid email or password" });
+                }
+
+                var token = GenerateJwtToken(user.UserId, user.Email);
+
+                _logger.LogInformation("User logged in: {Email} (ID: {UserId})", email, user.UserId);
+
+                return Ok(new
+                {
+                    token,
+                    userId = user.UserId,
+                    email = user.Email,
+                    username = user.Username
+                });
+            }
+            catch (Exception ex)
             {
-                return Unauthorized(new { message = "Invalid email or password" });
+                _logger.LogError(ex, "Error during login for email: {Email}", request.Email);
+                return StatusCode(500, new { message = "An error occurred during login" });
             }
-
-            // In a real application, generate a proper JWT token here
-            return Ok(new { token = "mocked-token", userId = user.UserId });
         }
 
+        // ---------------------------
+        // Users (protected by JWT)
+        // ---------------------------
+
+        // GET api/auth/user/{id}  (Protected)
+        [HttpGet("user/{id}")]
+        [Authorize]
+        public async Task<IActionResult> GetUserById(int id)
+        {
+            try
+            {
+                var user = await _context.Users
+                    .Select(u => new
+                    {
+                        u.UserId,
+                        u.Username,
+                        u.Email,
+                        u.FirstName,
+                        u.LastName,
+                        u.ProfileImageUrl,
+                        u.Coins,
+                        u.Tickets,
+                        u.CreatedAt
+                    })
+                    .FirstOrDefaultAsync(u => u.UserId == id);
+
+                if (user == null)
+                    return NotFound(new { message = "User not found" });
+
+                return Ok(user);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting user by ID: {UserId}", id);
+                return StatusCode(500, new { message = "An error occurred while retrieving user data" });
+            }
+        }
+
+        //[HttpPut("edit-profile/{id}")]
+        //[Authorize]
+        //public async Task<IActionResult> EditProfile(int id, [FromBody] EditProfileRequest request)
+        //{
+        //    if (!ModelState.IsValid)
+        //        return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
+
+        //    try
+        //    {
+        //        var user = await _context.Users.FindAsync(id);
+        //        if (user == null) return NotFound(new { message = "User not found" });
+
+        //        if (!string.IsNullOrWhiteSpace(request.Username) && request.Username != user.Username)
+        //        {
+        //            var exists = await _context.Users.AnyAsync(u => u.Username == request.Username && u.UserId != id);
+        //            if (exists) return Conflict(new { message = "Username is already taken" });
+        //            user.Username = request.Username.Trim();
+        //        }
+
+        //        if (!string.IsNullOrWhiteSpace(request.ProfileImageUrl))
+        //            user.ProfileImageUrl = request.ProfileImageUrl.Trim();
+
+        //        await _context.SaveChangesAsync();
+        //        _logger.LogInformation("Profile updated for user ID: {UserId}", id);
+
+        //        return Ok(new
+        //        {
+        //            message = "Profile updated successfully",
+        //            userId = user.UserId,
+        //            username = user.Username,
+        //            profileImageUrl = user.ProfileImageUrl
+        //        });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError(ex, "Error updating profile for user ID: {UserId}", id);
+        //        return StatusCode(500, new { message = "An error occurred while updating profile" });
+        //    }
+        //}
         [HttpPut("edit-profile/{id}")]
+        [Authorize]
         public async Task<IActionResult> EditProfile(int id, [FromBody] EditProfileRequest request)
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
             }
 
-            var user = await _context.Users.FindAsync(id);
-            if (user == null) return NotFound("User not found");
+            try
+            {
+                var user = await _context.Users.FindAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "User not found" });
 
-            user.Username = request.Username;
-            user.ProfileImageUrl = request.ProfileImageUrl;
-            await _context.SaveChangesAsync();
+                // Username change (only if provided and different)
+                if (!string.IsNullOrWhiteSpace(request.Username) && request.Username != user.Username)
+                {
+                    var exists = await _context.Users
+                        .AnyAsync(u => u.Username == request.Username && u.UserId != id);
 
-            return Ok("Profile updated");
+                    if (exists)
+                        return Conflict(new { message = "Username is already taken" });
+
+                    user.Username = request.Username.Trim();
+                }
+
+                // Profile image change (only if provided)
+                if (!string.IsNullOrWhiteSpace(request.ProfileImageUrl))
+                {
+                    user.ProfileImageUrl = request.ProfileImageUrl.Trim();
+                }
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = "Profile updated successfully",
+                    userId = user.UserId,
+                    username = user.Username,
+                    profileImageUrl = user.ProfileImageUrl
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating profile for user ID: {UserId}", id);
+                return StatusCode(500, new { message = "An error occurred while updating profile" });
+            }
         }
 
         [HttpPut("change-email/{id}")]
+        [Authorize]
         public async Task<IActionResult> ChangeEmail(int id, [FromBody] ChangeEmailRequest request)
         {
             if (!ModelState.IsValid)
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
+
+            try
             {
-                return BadRequest(ModelState);
+                var user = await _context.Users.FindAsync(id);
+                if (user == null) return NotFound(new { message = "User not found" });
+
+                var newEmail = (request.NewEmail ?? "").Trim().ToLowerInvariant();
+                if (await _context.Users.AnyAsync(u => u.Email.ToLower() == newEmail && u.UserId != id))
+                    return Conflict(new { message = "Email is already in use by another account" });
+
+                user.Email = newEmail;
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Email changed for user ID: {UserId}", id);
+                return Ok(new { message = "Email updated successfully" });
             }
-
-            var user = await _context.Users.FindAsync(id);
-            if (user == null) return NotFound("User not found");
-
-            // Check if new email is already in use
-            var existingUser = _context.Users.FirstOrDefault(u => u.Email == request.NewEmail && u.UserId != id);
-            if (existingUser != null)
+            catch (Exception ex)
             {
-                return BadRequest("Email is already in use");
+                _logger.LogError(ex, "Error changing email for user ID: {UserId}", id);
+                return StatusCode(500, new { message = "An error occurred while changing email" });
             }
-
-            user.Email = request.NewEmail;
-            await _context.SaveChangesAsync();
-
-            return Ok("Email updated");
         }
 
         [HttpPut("change-password/{id}")]
+        [Authorize]
         public async Task<IActionResult> ChangePassword(int id, [FromBody] ChangePasswordRequest request)
         {
             if (!ModelState.IsValid)
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
+
+            try
             {
-                return BadRequest(ModelState);
+                var user = await _context.Users.FindAsync(id);
+                if (user == null) return NotFound(new { message = "User not found" });
+
+                if (!VerifyPassword(request.CurrentPassword, user.PasswordHash))
+                    return BadRequest(new { message = "Current password is incorrect" });
+
+                var (hash, salt) = HashPassword(request.NewPassword);
+                user.PasswordHash = $"{Convert.ToBase64String(salt)}:{Convert.ToBase64String(hash)}";
+
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Password changed for user ID: {UserId}", id);
+
+                return Ok(new { message = "Password has been updated" });
             }
-
-            var user = await _context.Users.FindAsync(id);
-            if (user == null) return NotFound("User not found");
-
-            // Verify current password
-            if (!VerifyPassword(request.CurrentPassword, user.PasswordHash))
+            catch (Exception ex)
             {
-                return BadRequest("Current password is incorrect");
+                _logger.LogError(ex, "Error changing password for user ID: {UserId}", id);
+                return StatusCode(500, new { message = "An error occurred while changing password" });
             }
-
-            // Hash and set new password
-            user.PasswordHash = HashPassword(request.NewPassword);
-            await _context.SaveChangesAsync();
-
-            return Ok("Password updated");
         }
 
+        // ---------------------------
+        // Forgot / Reset (mock)
+        // ---------------------------
+
         [HttpPost("forgot-password")]
-        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        [AllowAnonymous]
+        public IActionResult ForgotPassword([FromBody] ForgotPasswordRequest request)
         {
             if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
 
-            var user = _context.Users.FirstOrDefault(u => u.Email == request.Email);
-            if (user != null)
-            {
-                // In a real application, you would:
-                // 1. Generate a password reset token
-                // 2. Store it in the database with an expiration time
-                // 3. Send an email with a reset link containing the token
-
-                // For now, we'll just return a success message regardless of whether the email exists
-                // (this is a security best practice to prevent email enumeration)
-            }
-
-            return Ok("If your email is registered, you will receive a password reset link shortly.");
+            // In production: generate token, store, email link.
+            _logger.LogInformation("Password reset requested (mock) for {Email}", request.Email);
+            return Ok(new { message = "If the email exists, a reset link will be sent." });
         }
 
         [HttpPost("reset-password")]
+        [AllowAnonymous]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
         {
             if (!ModelState.IsValid)
+                return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) });
+
+            // In production: validate token
+            var email = (request.Email ?? "").Trim().ToLowerInvariant();
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
+            if (user != null)
             {
-                return BadRequest(ModelState);
+                var (hash, salt) = HashPassword(request.NewPassword);
+                user.PasswordHash = $"{Convert.ToBase64String(salt)}:{Convert.ToBase64String(hash)}";
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Password reset (mock) for {Email}", email);
             }
-
-            // In a real application, you would:
-            // 1. Validate the reset token (check if it exists and hasn't expired)
-            // 2. Find the user associated with the token
-            // 3. Update the password
-            // 4. Invalidate the token so it can't be used again
-
-            // For demonstration purposes, we'll assume the token is valid
-            var user = _context.Users.FirstOrDefault(u => u.Email == request.Email);
-            if (user == null)
-            {
-                // Don't reveal that the user doesn't exist
-                return Ok("Password reset successfully");
-            }
-
-            user.PasswordHash = HashPassword(request.NewPassword);
-            await _context.SaveChangesAsync();
-
-            return Ok("Password reset successfully");
+            return Ok(new { message = "Password reset successfully" });
         }
 
-        // Password hashing method
-        private string HashPassword(string password)
-        {
-            // Generate a 128-bit salt using a secure PRNG
-            byte[] salt = new byte[128 / 8];
-            using (var rng = RandomNumberGenerator.Create())
-            {
-                rng.GetBytes(salt);
-            }
+        // ---------------------------
+        // Password helpers
+        // ---------------------------
 
-            // Derive a 256-bit subkey (use HMACSHA256 with 100,000 iterations)
-            string hashed = Convert.ToBase64String(KeyDerivation.Pbkdf2(
+        private static (byte[] hash, byte[] salt) HashPassword(string password)
+        {
+            var salt = RandomNumberGenerator.GetBytes(16); // 128-bit
+            var hash = KeyDerivation.Pbkdf2(
                 password: password,
                 salt: salt,
                 prf: KeyDerivationPrf.HMACSHA256,
-                iterationCount: 100000,
-                numBytesRequested: 256 / 8));
-
-            // Combine salt and hash for storage
-            return $"{Convert.ToBase64String(salt)}:{hashed}";
+                iterationCount: 100_000,
+                numBytesRequested: 32 // 256-bit
+            );
+            return (hash, salt);
         }
 
-        // Password verification method
-        private bool VerifyPassword(string password, string storedHash)
+        private static bool VerifyPassword(string password, string stored)
         {
-            try
+            // expected format: "<base64 salt>:<base64 hash>"
+            var parts = stored.Split(':');
+            if (parts.Length != 2) return false;
+
+            var salt = Convert.FromBase64String(parts[0]);
+            var storedHash = Convert.FromBase64String(parts[1]);
+
+            var computed = KeyDerivation.Pbkdf2(
+                password: password,
+                salt: salt,
+                prf: KeyDerivationPrf.HMACSHA256,
+                iterationCount: 100_000,
+                numBytesRequested: 32
+            );
+            return CryptographicOperations.FixedTimeEquals(computed, storedHash);
+        }
+
+        // ---------------------------
+        // JWT helper
+        // ---------------------------
+
+        private string GenerateJwtToken(int userId, string email)
+        {
+            var section = _config.GetSection("Jwt");
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(section["Key"]!));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var expires = DateTime.UtcNow.AddDays(double.Parse(section["ExpiresDays"] ?? "7"));
+
+            var claims = new[]
             {
-                // Split the stored hash into salt and password hash
-                var parts = storedHash.Split(':');
-                if (parts.Length != 2)
-                {
-                    return false;
-                }
+                new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, email),
+                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
 
-                var salt = Convert.FromBase64String(parts[0]);
-                var storedPasswordHash = parts[1];
+            var token = new JwtSecurityToken(
+                issuer: section["Issuer"],
+                audience: section["Audience"],
+                claims: claims,
+                expires: expires,
+                signingCredentials: creds
+            );
 
-                // Hash the provided password with the same salt
-                string hashedPassword = Convert.ToBase64String(KeyDerivation.Pbkdf2(
-                    password: password,
-                    salt: salt,
-                    prf: KeyDerivationPrf.HMACSHA256,
-                    iterationCount: 100000,
-                    numBytesRequested: 256 / 8));
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
 
-                // Compare the hashes
-                return storedPasswordHash == hashedPassword;
-            }
-            catch
+        // ---------------------------
+        // Utility
+        // ---------------------------
+
+        private string GenerateUniqueUsername(string firstName, string lastName)
+        {
+            var baseUsername = $"{firstName}{lastName}".ToLowerInvariant();
+            var candidate = baseUsername;
+            var i = 1;
+
+            while (_context.Users.Any(u => u.Username == candidate))
             {
-                return false;
+                candidate = $"{baseUsername}{i}";
+                i++;
             }
-        }
-
-        public class ChangePasswordRequest
-        {
-            [Required]
-            public string CurrentPassword { get; set; } = string.Empty;
-
-            [Required]
-            [MinLength(6, ErrorMessage = "Password must be at least 6 characters long")]
-            public string NewPassword { get; set; } = string.Empty;
-        }
-
-        public class ChangeEmailRequest
-        {
-            [Required]
-            [EmailAddress(ErrorMessage = "Invalid email address")]
-            public string NewEmail { get; set; } = string.Empty;
-        }
-
-        public class EditProfileRequest
-        {
-            [Required]
-            [MinLength(3, ErrorMessage = "Username must be at least 3 characters long")]
-            public string Username { get; set; } = string.Empty;
-
-            [Url(ErrorMessage = "Invalid URL format")]
-            public string ProfileImageUrl { get; set; } = string.Empty;
-        }
-
-        public class ForgotPasswordRequest
-        {
-            [Required]
-            [EmailAddress(ErrorMessage = "Invalid email address")]
-            public string Email { get; set; } = string.Empty;
-        }
-
-        public class ResetPasswordRequest
-        {
-            [Required]
-            [EmailAddress(ErrorMessage = "Invalid email address")]
-            public string Email { get; set; } = string.Empty;
-
-            [Required]
-            public string Token { get; set; } = string.Empty;
-
-            [Required]
-            [MinLength(6, ErrorMessage = "Password must be at least 6 characters long")]
-            public string NewPassword { get; set; } = string.Empty;
+            return candidate;
         }
     }
 
-    //public class SignupRequest
-    //{
-    //    [Required]
-    //    [EmailAddress(ErrorMessage = "Invalid email address")]
-    //    public string Email { get; set; }
+    // ---------------------------
+    // DTOs
+    // ---------------------------
 
-    //    [Required]
-    //    [MinLength(6, ErrorMessage = "Password must be at least 6 characters long")]
-    //    public string Password { get; set; }
-    //}
     public class SignupRequest
     {
-        [Required]
-        [EmailAddress(ErrorMessage = "Invalid email address")]
-        public string Email { get; set; }
-
-        [Required]
-        [MinLength(6, ErrorMessage = "Password must be at least 6 characters long")]
-        public string Password { get; set; }
-
-        [Required]
-        public string FirstName { get; set; }
-
-        [Required]
-        public string LastName { get; set; }
-
-        public string Username { get; set; } // Optional field
+        [Required, EmailAddress] public string Email { get; set; } = "";
+        [Required, MinLength(6)] public string Password { get; set; } = "";
+        [Required, StringLength(50)] public string FirstName { get; set; } = "";
+        [Required, StringLength(50)] public string LastName { get; set; } = "";
+        [StringLength(20)] public string? Username { get; set; }
     }
 
     public class LoginRequest
     {
-        [Required]
-        [EmailAddress(ErrorMessage = "Invalid email address")]
-        public string Email { get; set; }
-
-        [Required]
-        public string Password { get; set; }
+        [Required, EmailAddress] public string Email { get; set; } = "";
+        [Required] public string Password { get; set; } = "";
     }
+
+    //public class EditProfileRequest
+    //{
+    //    [Required, MinLength(3), StringLength(20)]
+    //    public string Username { get; set; } = "";
+
+    //    [Url] public string? ProfileImageUrl { get; set; }
+    //}
+    public class EditProfileRequest
+    {
+        [MinLength(3), StringLength(20)]
+        public string? Username { get; set; }   // ← no [Required], now optional
+
+        [Url]
+        public string? ProfileImageUrl { get; set; }
+    }
+
+    public class ChangeEmailRequest
+    {
+        [Required, EmailAddress] public string NewEmail { get; set; } = "";
+    }
+
+    public class ChangePasswordRequest
+    {
+        [Required] public string CurrentPassword { get; set; } = "";
+        [Required, MinLength(6)] public string NewPassword { get; set; } = "";
+    }
+
+    public class ForgotPasswordRequest
+    {
+        [Required, EmailAddress] public string Email { get; set; } = "";
+    }
+
+    public class ResetPasswordRequest
+    {
+        [Required, EmailAddress] public string Email { get; set; } = "";
+        [Required] public string Token { get; set; } = ""; // mock
+        [Required, MinLength(6)] public string NewPassword { get; set; } = "";
+    }
+
 }
